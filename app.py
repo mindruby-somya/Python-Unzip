@@ -1,31 +1,56 @@
 import flask
-import base64
-from flask import request, redirect
+from flask import request
+from flask import jsonify
+import zipfile
+import requests
+from io import BytesIO
+import json
+
 
 app = flask.Flask(__name__)
 app.config["DEBUG"] = True
 
-@app.route('/', methods=['GET'])
+@app.route('/', methods=['POST'])
 def main():
-    state = request.args.get("state")
-    code = request.args.get("code")
-    data = decode(state).split('##')
-    print(data)
-    state = encode(data[0])
-    redirectURL = data[1] + '?state=' + state + '&code=' + code
-    print(redirectURL)
-    return redirect(redirectURL)
+    myZipFile = request.data
+    headers = flask.request.headers
+    respData = {}
+    zipdata = BytesIO()
+    zipdata.write(myZipFile)
+    pID = headers.get('parent-id')
+    returnURL = headers.get('return-url')
+    print(pID)
+    respIds = []
+    #https://ccdev3-moneyspot.cs57.force.com/services/apexrest/GetSeperateFiles/
+    if zipfile.is_zipfile(zipdata):
+        with zipfile.ZipFile(zipdata) as zip_ref:
+            for info in zip_ref.infolist():
+                data = info.filename
+                myHTML = zip_ref.read(data)
+                headToSend = {}
+                headToSend['parent-id'] = pID
+                headToSend['name'] = data
+                temp = {}
+                req = requests.post(returnURL, data=myHTML, headers=headToSend)
+                if req.status_code != 200:
+                    temp['name'] = data
+                    temp['status'] = 'failed'
+                else :
+                    temp['name'] = data
+                    temp['status'] = 'success'
+                    temp['id'] = req.text
+                respIds.append(temp)
+        respData['data'] = respIds
+        respData['success'] = True
+    else:
+        respData['success'] = False
 
-def decode(message):
-    base64_message = message
-    base64_bytes = base64_message.encode('ascii')
-    message_bytes = base64.b64decode(base64_bytes)
-    return message_bytes.decode('ascii')
-
-def encode(message):
-    message_bytes = message.encode('ascii')
-    base64_bytes = base64.b64encode(message_bytes)
-    return base64_bytes.decode('ascii')
+    response = app.response_class(
+        response = json.dumps(respData),
+        status = 200,
+        mimetype = 'application/json'
+    )
+    return response
 
 if __name__ == "__main__":
     app.run(debug=True)
